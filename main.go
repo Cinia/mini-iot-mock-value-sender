@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"math/rand"
 	"os"
 	"os/signal"
+	"strconv"
 	"sync"
 	"syscall"
+	"time"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/pflag"
@@ -13,6 +16,11 @@ import (
 
 	MQTT "github.com/eclipse/paho.mqtt.golang"
 )
+
+type sensor struct {
+	temperature float32
+	humidity    float32
+}
 
 func main() {
 	// allow setting values also with commandline flags
@@ -55,19 +63,54 @@ func main() {
 	go func(ctx context.Context) {
 		log.Info("Starting the sender thread")
 		defer wg.Done()
+
+		// generate intial values for sensors
+		s := createRandomSensorValues()
 		for {
 			select {
 			case <-ctx.Done():
 				log.Info("Context cancelled, quitting sender thread")
 				return
 			default:
-				log.Info("Sending message..")
-				if token := client.Publish("mini-iot/mock-sender/temperature", 0, false, "25"); token.Wait() && token.Error() != nil {
+				s = changeSensorValues(s)
+				log.Infof("Publishing temperature %.2f", s.temperature)
+				if token := client.Publish("mini-iot/mock-sender/temperature", 0, false, strconv.FormatFloat(float64(s.temperature), 'f', 2, 32)); token.Wait() && token.Error() != nil {
+					log.Fatal(token.Error())
+				}
+				log.Infof("Publishing humidity %.2f", s.humidity)
+				if token := client.Publish("mini-iot/mock-sender/humidity", 0, false, strconv.FormatFloat(float64(s.humidity), 'f', 2, 32)); token.Wait() && token.Error() != nil {
 					log.Fatal(token.Error())
 				}
 			}
+			time.Sleep(5 * time.Second)
 		}
 	}(ctx)
 
 	wg.Wait()
+}
+
+func createRandomSensorValues() sensor {
+	return sensor{
+		temperature: ((rand.Float32() * 20) + 15), // value between 15 and 35
+		humidity:    ((rand.Float32() * 90) + 10), // value between 10 and 100
+	}
+}
+
+func changeSensorValues(originalSensor sensor) sensor {
+	// change previous value by a value between -0.5 - 0.5
+	// and make sure it does not go over boundaries
+	originalSensor.temperature += (rand.Float32() - 0.5)
+	if originalSensor.temperature < 15 {
+		originalSensor.temperature++
+	} else if originalSensor.temperature > 35 {
+		originalSensor.temperature--
+	}
+
+	originalSensor.humidity += (rand.Float32() - 0.5)
+	if originalSensor.humidity < 10 {
+		originalSensor.humidity++
+	} else if originalSensor.humidity > 100 {
+		originalSensor.humidity--
+	}
+	return originalSensor
 }
